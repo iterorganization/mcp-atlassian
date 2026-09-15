@@ -20,3 +20,6 @@ class MainAppContext:
     full_confluence_config: ConfluenceConfig | None = None
     read_only: bool = False
     enabled_tools: list[str] | None = None
+    # Cached flags for server-level credentials
+    has_jira_server_credentials: bool = False
+    has_confluence_server_credentials: bool = False

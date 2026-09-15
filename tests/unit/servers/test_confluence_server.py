@@ -14,6 +14,7 @@ from starlette.requests import Request
 from src.mcp_atlassian.confluence import ConfluenceFetcher
 from src.mcp_atlassian.confluence.config import ConfluenceConfig
 from src.mcp_atlassian.models.confluence.page import ConfluencePage
+from src.mcp_atlassian.servers.confluence import _format_search_query
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
 from src.mcp_atlassian.utils.oauth import OAuthConfig
@@ -256,6 +257,81 @@ async def no_fetcher_client_fixture(no_fetcher_test_confluence_mcp, mock_request
         yield connected_client_for_no_fetcher
 
 
+# Unit tests for CQL conversion helper function
+def test_convert_simple_query_to_cql():
+    """Test converting a simple query without operators."""
+    result = _format_search_query("project documentation")
+    assert result == 'siteSearch ~ "project documentation"'
+
+
+def test_convert_simple_query_to_text_search():
+    """Test converting a simple query to text search."""
+    result = _format_search_query("project documentation", use_site_search=False)
+    assert result == 'text ~ "project documentation"'
+
+
+def test_convert_query_with_or_operator():
+    """Test converting a query with OR operator."""
+    result = _format_search_query("telework OR remote work")
+    assert result == 'siteSearch ~ "telework" OR siteSearch ~ "remote work"'
+
+
+def test_convert_query_with_and_operator():
+    """Test converting a query with AND operator."""
+    result = _format_search_query("devops AND kubernetes")
+    assert result == 'siteSearch ~ "devops" AND siteSearch ~ "kubernetes"'
+
+
+def test_convert_query_with_multiple_operators():
+    """Test converting a query with multiple logical operators."""
+    result = _format_search_query("python AND flask OR django")
+    assert result == 'siteSearch ~ "python" AND siteSearch ~ "flask" OR siteSearch ~ "django"'
+
+
+def test_convert_query_with_lowercase_or():
+    """Test that lowercase 'or' is treated as part of search phrase."""
+    result = _format_search_query("telework or remote work")
+    assert result == 'siteSearch ~ "telework or remote work"'
+
+
+def test_convert_query_with_mixed_case():
+    """Test mixed case operators (only uppercase with spaces should trigger)."""
+    result = _format_search_query("work OR play and rest")
+    # Only " OR " should trigger operator split, "and" is lowercase
+    assert result == 'siteSearch ~ "work" OR siteSearch ~ "play and rest"'
+
+
+def test_passthrough_existing_cql_with_field_operators():
+    """Test that existing CQL with field operators passes through unchanged."""
+    cql = 'text ~ "important" AND space = "DEV"'
+    result = _format_search_query(cql)
+    assert result == cql
+
+
+def test_passthrough_cql_with_comparison_operators():
+    """Test that CQL with comparison operators passes through."""
+    cql = 'created >= "2023-01-01" AND lastModified > startOfMonth()'
+    result = _format_search_query(cql)
+    assert result == cql
+
+
+def test_passthrough_cql_with_currentuser():
+    """Test that CQL with currentUser() passes through."""
+    cql = 'creator = currentUser() AND type = page'
+    result = _format_search_query(cql)
+    assert result == cql
+
+
+def test_convert_complex_natural_language():
+    """Test converting complex natural language with multiple terms."""
+    result = _format_search_query("machine learning AND (python OR R)")
+    # This should still work even with parentheses in the terms
+    assert 'siteSearch ~ "machine learning"' in result
+    assert ' AND ' in result
+    assert 'siteSearch ~ "(python"' in result or 'siteSearch ~ "python"' in result
+
+
+# Integration tests for the search tool
 @pytest.mark.anyio
 async def test_search(client, mock_confluence_fetcher):
     """Test the search tool with basic query."""
@@ -274,12 +350,93 @@ async def test_search(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_search_with_or_operator(client, mock_confluence_fetcher):
+    """Test the search tool with natural language OR operator."""
+    response = await client.call_tool(
+        "confluence_search", {"query": "telework OR remote work"}
+    )
+
+    mock_confluence_fetcher.search.assert_called_once()
+    args, kwargs = mock_confluence_fetcher.search.call_args
+    # Should convert to proper CQL with OR operator
+    assert 'siteSearch ~ "telework" OR siteSearch ~ "remote work"' in args[0]
+    assert kwargs.get("limit") == 10
+
+    result_data = json.loads(response.content[0].text)
+    assert isinstance(result_data, list)
+
+
+@pytest.mark.anyio
+async def test_search_with_and_operator(client, mock_confluence_fetcher):
+    """Test the search tool with natural language AND operator."""
+    response = await client.call_tool(
+        "confluence_search", {"query": "devops AND kubernetes"}
+    )
+
+    mock_confluence_fetcher.search.assert_called_once()
+    args, kwargs = mock_confluence_fetcher.search.call_args
+    # Should convert to proper CQL with AND operator
+    assert 'siteSearch ~ "devops" AND siteSearch ~ "kubernetes"' in args[0]
+
+    result_data = json.loads(response.content[0].text)
+    assert isinstance(result_data, list)
+
+
+@pytest.mark.anyio
+async def test_search_with_multiple_operators(client, mock_confluence_fetcher):
+    """Test the search tool with multiple logical operators."""
+    response = await client.call_tool(
+        "confluence_search", {"query": "python AND flask OR django"}
+    )
+
+    mock_confluence_fetcher.search.assert_called_once()
+    args, kwargs = mock_confluence_fetcher.search.call_args
+    # Should convert each term to proper CQL
+    expected_cql = 'siteSearch ~ "python" AND siteSearch ~ "flask" OR siteSearch ~ "django"'
+    assert expected_cql in args[0]
+
+    result_data = json.loads(response.content[0].text)
+    assert isinstance(result_data, list)
+
+
+@pytest.mark.anyio
+async def test_search_with_lowercase_or(client, mock_confluence_fetcher):
+    """Test that lowercase 'or' is treated as part of the search phrase."""
+    response = await client.call_tool(
+        "confluence_search", {"query": "telework or remote work"}
+    )
+
+    mock_confluence_fetcher.search.assert_called_once()
+    args, kwargs = mock_confluence_fetcher.search.call_args
+    # Should treat as a single phrase since 'or' is lowercase
+    assert 'siteSearch ~ "telework or remote work"' in args[0]
+
+    result_data = json.loads(response.content[0].text)
+    assert isinstance(result_data, list)
+
+
+@pytest.mark.anyio
+async def test_search_with_existing_cql(client, mock_confluence_fetcher):
+    """Test that existing CQL queries pass through unchanged."""
+    cql_query = 'text ~ "important" AND space = "DEV"'
+    response = await client.call_tool("confluence_search", {"query": cql_query})
+
+    mock_confluence_fetcher.search.assert_called_once()
+    args, kwargs = mock_confluence_fetcher.search.call_args
+    # Should pass through raw CQL
+    assert args[0] == cql_query
+
+    result_data = json.loads(response.content[0].text)
+    assert isinstance(result_data, list)
+
+
+@pytest.mark.anyio
 async def test_get_page(client, mock_confluence_fetcher):
     """Test the get_page tool with default parameters."""
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True
+        "123456", convert_to_markdown=True, body_format="export_view"
     )
 
     result_data = json.loads(response.content[0].text)
@@ -298,7 +455,7 @@ async def test_get_page_no_metadata(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=True
+        "123456", convert_to_markdown=True, body_format="export_view"
     )
 
     result_data = json.loads(response.content[0].text)
@@ -328,7 +485,7 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.get_page_content.assert_called_once_with(
-        "123456", convert_to_markdown=False
+        "123456", convert_to_markdown=False, body_format="export_view"
     )
 
     result_data = json.loads(response.content[0].text)

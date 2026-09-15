@@ -167,6 +167,26 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
         ValueError: If configuration or credentials are invalid.
     """
     logger.debug(f"get_jira_fetcher: ENTERED. Context ID: {id(ctx)}")
+    
+    # Get global config first to check if server-level auth is configured
+    lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
+    app_lifespan_ctx: MainAppContext | None = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    
+    # Priority 1: If server-level credentials are configured, always use them (using cached flag)
+    if app_lifespan_ctx and app_lifespan_ctx.has_jira_server_credentials:
+        global_config = app_lifespan_ctx.full_jira_config
+        logger.debug(
+            "get_jira_fetcher: Server-level credentials are configured. "
+            f"Using global JiraFetcher (auth_type: {global_config.auth_type}). "
+            "Ignoring any user-provided credentials."
+        )
+        return JiraFetcher(config=global_config)
+    
+    # Priority 2: Try to use user-specific credentials from request headers
     try:
         request: Request = get_http_request()
         logger.debug(
@@ -273,6 +293,26 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
         ValueError: If configuration or credentials are invalid.
     """
     logger.debug(f"get_confluence_fetcher: ENTERED. Context ID: {id(ctx)}")
+    
+    # Get global config first to check if server-level auth is configured
+    lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
+    app_lifespan_ctx: MainAppContext | None = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    
+    # Priority 1: If server-level credentials are configured, always use them (using cached flag)
+    if app_lifespan_ctx and app_lifespan_ctx.has_confluence_server_credentials:
+        global_config = app_lifespan_ctx.full_confluence_config
+        logger.debug(
+            "get_confluence_fetcher: Server-level credentials are configured. "
+            f"Using global ConfluenceFetcher (auth_type: {global_config.auth_type}). "
+            "Ignoring any user-provided credentials."
+        )
+        return ConfluenceFetcher(config=global_config)
+    
+    # Priority 2: Try to use user-specific credentials from request headers
     try:
         request: Request = get_http_request()
         logger.debug(
@@ -366,6 +406,7 @@ async def get_confluence_fetcher(ctx: Context) -> ConfluenceFetcher:
         logger.debug(
             "Not in an HTTP request context. Attempting global ConfluenceFetcher for non-HTTP."
         )
+    # Fallback to global fetcher if not in HTTP context or no user info
     lifespan_ctx_dict_global = ctx.request_context.lifespan_context  # type: ignore
     app_lifespan_ctx_global: MainAppContext | None = (
         lifespan_ctx_dict_global.get("app_lifespan_context")

@@ -30,7 +30,11 @@ class PagesMixin(ConfluenceClient):
         return None
 
     def get_page_content(
-        self, page_id: str, *, convert_to_markdown: bool = True
+        self,
+        page_id: str,
+        *,
+        convert_to_markdown: bool = True,
+        body_format: str = "export_view"
     ) -> ConfluencePage:
         """
         Get content of a specific page.
@@ -39,6 +43,11 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
                                otherwise returns raw HTML (keyword-only)
+            body_format: The body format to retrieve from Confluence API.
+                        Options: 'storage', 'view', 'export_view' (default: 'export_view')
+                        - 'storage': Raw storage format (XHTML-based)
+                        - 'view': Rendered view format
+                        - 'export_view': Export-ready format (most compatible)
 
         Returns:
             ConfluencePage model containing the page content and metadata
@@ -47,24 +56,33 @@ class PagesMixin(ConfluenceClient):
             MCPAtlassianAuthenticationError: If authentication fails with the Confluence API (401/403)
             Exception: If there is an error retrieving the page
         """
+        # Validate body_format
+        valid_formats = ["storage", "view", "export_view"]
+        if body_format not in valid_formats:
+            raise ValueError(
+                f"Invalid body_format '{body_format}'. Must be one of: {', '.join(valid_formats)}"
+            )
+
         try:
             # Use v2 API for OAuth authentication, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
+            expand_str = f"body.{body_format},space"
+
             if v2_adapter:
                 logger.debug(
-                    f"Using v2 API for OAuth authentication to get page '{page_id}'"
+                    f"Using v2 API for OAuth authentication to get page '{page_id}' with format '{body_format}'"
                 )
                 page = v2_adapter.get_page(
                     page_id=page_id,
-                    expand="body.storage,version,space,children.attachment",
+                    expand=expand_str,
                 )
             else:
                 logger.debug(
-                    f"Using v1 API for token/basic authentication to get page '{page_id}'"
+                    f"Using v1 API for token/basic authentication to get page '{page_id}' with format '{body_format}'"
                 )
                 page = self.confluence.get_page_by_id(
                     page_id=page_id,
-                    expand="body.storage,version,space,children.attachment",
+                    expand=expand_str,
                 )
 
             # Check if API returned an error string instead of a dict
@@ -74,10 +92,10 @@ class PagesMixin(ConfluenceClient):
 
             space_key = page.get("space", {}).get("key", "")
             try:
-                content = page["body"]["storage"]["value"]
+                content = page["body"][body_format]["value"]
             except (KeyError, TypeError) as e:
                 logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                    f"Page {page.get('id', 'unknown')} missing body.{body_format}.value: {e}"
                 )
                 content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
@@ -167,7 +185,12 @@ class PagesMixin(ConfluenceClient):
             return []
 
     def get_page_by_title(
-        self, space_key: str, title: str, *, convert_to_markdown: bool = True
+        self,
+        space_key: str,
+        title: str,
+        *,
+        convert_to_markdown: bool = True,
+        body_format: str = "export_view"
     ) -> ConfluencePage | None:
         """
         Get a specific page by its title from a Confluence space.
@@ -177,14 +200,27 @@ class PagesMixin(ConfluenceClient):
             title: The title of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
                                otherwise returns raw HTML (keyword-only)
+            body_format: The body format to retrieve from Confluence API.
+                        Options: 'storage', 'view', 'export_view' (default: 'export_view')
+                        - 'storage': Raw storage format (XHTML-based)
+                        - 'view': Rendered view format
+                        - 'export_view': Export-ready format (most compatible)
 
         Returns:
             ConfluencePage model containing the page content and metadata, or None if not found
         """
+        # Validate body_format
+        valid_formats = ["storage", "view", "export_view"]
+        if body_format not in valid_formats:
+            raise ValueError(
+                f"Invalid body_format '{body_format}'. Must be one of: {', '.join(valid_formats)}"
+            )
+
         try:
             # Directly try to find the page by title
+            expand_str = f"body.{body_format},version"
             page = self.confluence.get_page_by_title(
-                space=space_key, title=title, expand="body.storage,version"
+                space=space_key, title=title, expand=expand_str
             )
 
             if not page:
@@ -195,10 +231,10 @@ class PagesMixin(ConfluenceClient):
                 return None
 
             try:
-                content = page["body"]["storage"]["value"]
+                content = page["body"][body_format]["value"]
             except (KeyError, TypeError) as e:
                 logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                    f"Page {page.get('id', 'unknown')} missing body.{body_format}.value: {e}"
                 )
                 content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
@@ -241,6 +277,7 @@ class PagesMixin(ConfluenceClient):
         limit: int = 10,
         *,
         convert_to_markdown: bool = True,
+        body_format: str = "export_view"
     ) -> list[ConfluencePage]:
         """
         Get all pages from a specific space.
@@ -251,21 +288,31 @@ class PagesMixin(ConfluenceClient):
             limit: Maximum number of pages to return
             convert_to_markdown: When True, returns content in markdown format,
                                otherwise returns raw HTML (keyword-only)
+            body_format: The body format to retrieve from Confluence API.
+                        Options: 'storage', 'view', 'export_view' (default: 'export_view')
 
         Returns:
             List of ConfluencePage models containing page content and metadata
         """
+        # Validate body_format
+        valid_formats = ["storage", "view", "export_view"]
+        if body_format not in valid_formats:
+            raise ValueError(
+                f"Invalid body_format '{body_format}'. Must be one of: {', '.join(valid_formats)}"
+            )
+
+        expand_str = f"body.{body_format}"
         pages = self.confluence.get_all_pages_from_space(
-            space=space_key, start=start, limit=limit, expand="body.storage"
+            space=space_key, start=start, limit=limit, expand=expand_str
         )
 
         page_models = []
         for page in pages:
             try:
-                content = page["body"]["storage"]["value"]
+                content = page["body"][body_format]["value"]
             except (KeyError, TypeError) as e:
                 logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
+                    f"Page {page.get('id', 'unknown')} missing body.{body_format}.value: {e}"
                 )
                 content = ""
             processed_html, processed_markdown = self.preprocessor.process_html_content(
@@ -473,6 +520,7 @@ class PagesMixin(ConfluenceClient):
         *,
         convert_to_markdown: bool = True,
         include_folders: bool = True,
+        body_format: str = "storage"
     ) -> list[ConfluencePage]:
         """
         Get child pages and folders of a specific Confluence page.
@@ -485,10 +533,19 @@ class PagesMixin(ConfluenceClient):
             convert_to_markdown: When True, returns content in markdown format,
                                otherwise returns raw HTML (keyword-only)
             include_folders: When True, also returns child folders (keyword-only)
+            body_format: The body format to retrieve from Confluence API.
+                        Options: 'storage', 'view', 'export_view' (default: 'storage')
+                        Note: Only used when body content is expanded
 
         Returns:
             List of ConfluencePage models containing the child pages and folders
         """
+        # Validate body_format
+        valid_formats = ["storage", "view", "export_view"]
+        if body_format not in valid_formats:
+            raise ValueError(
+                f"Invalid body_format '{body_format}'. Must be one of: {', '.join(valid_formats)}"
+            )
         try:
             # Use the Atlassian Python API's get_page_child_by_type method
             # First, get child pages
@@ -541,7 +598,7 @@ class PagesMixin(ConfluenceClient):
                 # Only process content if we have "body" expanded
                 content_override = None
                 if "body" in item and convert_to_markdown:
-                    content = item.get("body", {}).get("storage", {}).get("value", "")
+                    content = item.get("body", {}).get(body_format, {}).get("value", "")
                     if content:
                         _, processed_markdown = self.preprocessor.process_html_content(
                             content,

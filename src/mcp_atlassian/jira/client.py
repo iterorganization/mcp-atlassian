@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Any, Literal
 
-from atlassian import Jira
+from mcp_atlassian.jira.custom_jira import CustomJira as Jira # import the custom Jira class
 from requests import Session
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -15,6 +15,7 @@ from mcp_atlassian.utils.logging import (
     mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
+from mcp_atlassian.utils.request_logging import wrap_session_with_logging
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
 from .config import JiraConfig
@@ -59,6 +60,9 @@ class JiraClient:
                 error_msg = "Failed to configure OAuth session"
                 raise MCPAtlassianAuthenticationError(error_msg)
 
+            # Wrap session with request logging
+            wrap_session_with_logging(session)
+
             # The Jira API URL with OAuth is different
             api_url = (
                 f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
@@ -83,6 +87,10 @@ class JiraClient:
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
             )
+
+            # Wrap session with request logging
+            wrap_session_with_logging(self.jira._session)
+
         else:  # basic auth
             logger.debug(
                 f"Initializing Jira client with Basic auth. "
@@ -97,6 +105,10 @@ class JiraClient:
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
             )
+
+            # Wrap session with request logging
+            wrap_session_with_logging(self.jira._session)
+            
             logger.debug(
                 f"Jira client initialized. Session headers (Authorization masked): "
                 f"{get_masked_session_headers(dict(self.jira._session.headers))}"

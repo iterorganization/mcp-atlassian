@@ -164,14 +164,14 @@ class TestCommentsMixin:
         }
 
         # Call the method
-        result = comments_mixin.add_comment("TEST-123", "Test comment")
+        result = comments_mixin.add_comment("TEST-123", "Test comment", None)
 
         # Verify
         comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
             "Test comment"
         )
         comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "*This* is _Jira_ formatted", None
+            "TEST-123", "*This* is _Jira_ formatted", None, None
         )
         assert result["id"] == "10001"
         assert result["body"] == "This is a comment"
@@ -204,14 +204,14 @@ class TestCommentsMixin:
         """
 
         # Call the method
-        result = comments_mixin.add_comment("TEST-123", markdown_comment)
+        result = comments_mixin.add_comment("TEST-123", markdown_comment, None)
 
         # Verify
         comments_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
             markdown_comment
         )
         comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "*This* is _Jira_ formatted", None
+            "TEST-123", "*This* is _Jira_ formatted", None, None
         )
         assert result["body"] == "*This* is _Jira_ formatted"
 
@@ -226,12 +226,12 @@ class TestCommentsMixin:
         }
 
         # Call the method with empty comment
-        result = comments_mixin.add_comment("TEST-123", "")
+        result = comments_mixin.add_comment("TEST-123", "", None)
 
         # Verify - for empty comments, markdown_to_jira should NOT be called as per implementation
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
         comments_mixin.jira.issue_add_comment.assert_called_once_with(
-            "TEST-123", "", None
+            "TEST-123", "", None, None
         )
         assert result["body"] == ""
 
@@ -258,6 +258,7 @@ class TestCommentsMixin:
             "TEST-123",
             "*This* is _Jira_ formatted",
             {"type": "group", "value": "restricted"},
+            None,
         )
         assert result["id"] == "10001"
         assert result["body"] == "This is a comment"
@@ -271,7 +272,7 @@ class TestCommentsMixin:
 
         # Verify it raises the wrapped exception
         with pytest.raises(Exception, match="Error adding comment"):
-            comments_mixin.add_comment("TEST-123", "Test comment")
+            comments_mixin.add_comment("TEST-123", "Test comment", None)
 
     def test_edit_comment_basic(self, comments_mixin):
         """Test edit_comment with basic data."""

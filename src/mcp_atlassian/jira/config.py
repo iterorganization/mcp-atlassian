@@ -122,8 +122,14 @@ class JiraConfig:
             elif username and api_token:
                 auth_type = "basic"
             else:
-                error_msg = "Server/Data Center authentication requires JIRA_PERSONAL_TOKEN or JIRA_USERNAME and JIRA_API_TOKEN"
-                raise ValueError(error_msg)
+                 # Expect PAT to be provided in header
+                logger = logging.getLogger("mcp-atlassian.confluence.config")
+                logger.warning(
+                    "No Server/Data Center authentication set. Expecting client to provide PAT in header."
+                )
+                auth_type = "pat_in_header"
+                # error_msg = "Server/Data Center authentication requires CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN"
+                # raise ValueError(error_msg)
 
         # SSL verification (for Server/DC)
         ssl_verify = is_env_ssl_verify("JIRA_SSL_VERIFY")
@@ -213,6 +219,8 @@ class JiraConfig:
             return bool(self.personal_token)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
+        elif self.auth_type == "pat_in_header":
+            return True
         logger.warning(
             f"Unknown or unsupported auth_type: {self.auth_type} in JiraConfig"
         )

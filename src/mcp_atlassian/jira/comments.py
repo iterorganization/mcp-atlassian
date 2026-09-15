@@ -53,7 +53,7 @@ class CommentsMixin(JiraClient):
             raise Exception(f"Error getting comments: {str(e)}") from e
 
     def add_comment(
-        self, issue_key: str, comment: str, visibility: dict[str, str] | None = None
+        self, issue_key: str, comment: str, visibility: dict[str, str], properties: list[dict[str, Any]] | None = None
     ) -> dict[str, Any]:
         """
         Add a comment to an issue.
@@ -62,6 +62,7 @@ class CommentsMixin(JiraClient):
             issue_key: The issue key (e.g. 'PROJ-123')
             comment: Comment text to add (in Markdown format)
             visibility: (optional) Restrict comment visibility (e.g. {"type":"group","value:"jira-users"})
+            properties: (optional) List of property objects to attach to comment (e.g. [{"key": "key1", "value": "value1"}])
 
         Returns:
             The created comment details
@@ -74,7 +75,7 @@ class CommentsMixin(JiraClient):
             jira_formatted_comment = self._markdown_to_jira(comment)
 
             result = self.jira.issue_add_comment(
-                issue_key, jira_formatted_comment, visibility
+                issue_key, jira_formatted_comment, visibility, properties
             )
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_add_comment`: {type(result)}"

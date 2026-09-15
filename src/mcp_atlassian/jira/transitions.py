@@ -50,6 +50,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 # Option 1: 'to' field with sub-fields
                 if "to" in transition and isinstance(transition["to"], dict):
                     to_status = transition["to"].get("name")
+                # Option 1b: 'to' field as a string (which is the case of get_issue_transitions)
+                elif "to" in transition and isinstance(transition["to"], str):
+                    to_status = transition["to"]
                 # Option 2: 'to_status' field directly
                 elif "to_status" in transition:
                     to_status = transition.get("to_status")

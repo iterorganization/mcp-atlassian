@@ -37,7 +37,7 @@ class TestPagesMixin:
 
         # Assert
         pages_mixin.confluence.get_page_by_id.assert_called_once_with(
-            page_id=page_id, expand="body.storage,version,space,children.attachment"
+            page_id=page_id, expand="body.export_view,space"
         )
 
         # Verify result structure
@@ -165,7 +165,7 @@ class TestPagesMixin:
             "id": "987654321",
             "title": title,
             "space": {"key": space_key},
-            "body": {"storage": {"value": "<p>Example content</p>"}},
+            "body": {"export_view": {"value": "<p>Example content</p>"}},
             "version": {"number": 1},
         }
 
@@ -180,7 +180,7 @@ class TestPagesMixin:
 
         # Verify API calls
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space=space_key, title=title, expand="body.storage,version"
+            space=space_key, title=title, expand="body.export_view,version"
         )
 
         # Verify result
@@ -199,7 +199,7 @@ class TestPagesMixin:
         # Assert
         assert result is None
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space="NONEXISTENT", title="Page Title", expand="body.storage,version"
+            space="NONEXISTENT", title="Page Title", expand="body.export_view,version"
         )
 
     def test_get_page_by_title_page_not_found(self, pages_mixin):
@@ -213,7 +213,7 @@ class TestPagesMixin:
         # Assert
         assert result is None
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space="PROJ", title="Nonexistent Page", expand="body.storage,version"
+            space="PROJ", title="Nonexistent Page", expand="body.export_view,version"
         )
 
     def test_get_page_by_title_error_handling(self, pages_mixin):
@@ -240,7 +240,7 @@ class TestPagesMixin:
 
         # Assert
         pages_mixin.confluence.get_all_pages_from_space.assert_called_once_with(
-            space=space_key, start=0, limit=10, expand="body.storage"
+            space=space_key, start=0, limit=10, expand="body.export_view"
         )
 
         # Verify results
@@ -696,7 +696,7 @@ class TestPagesMixin:
 
         # Verify the API call
         pages_mixin.confluence.get_page_by_id.assert_called_once_with(
-            page_id=page_id, expand="body.storage,version,space,children.attachment"
+            page_id=page_id, expand="body.export_view,space"
         )
 
         # Verify the result
@@ -1186,7 +1186,10 @@ class TestPagesOAuthMixin:
             mock_v2_adapter.get_page.return_value = {
                 "id": page_id,
                 "title": "OAuth Test Page",
-                "body": {"storage": {"value": "<p>OAuth page content</p>"}},
+                "body": {
+                    "storage": {"value": "<p>OAuth page content</p>"},
+                    "export_view": {"value": "<p>OAuth page content</p>"}
+                },
                 "space": {"key": "PROJ", "name": "Project"},
                 "version": {"number": 3},
             }
@@ -1204,7 +1207,7 @@ class TestPagesOAuthMixin:
 
             # Assert that v2 API was used instead of v1
             mock_v2_adapter.get_page.assert_called_once_with(
-                page_id=page_id, expand="body.storage,version,space,children.attachment"
+                page_id=page_id, expand="body.export_view,space"
             )
 
             # Verify v1 API was NOT called

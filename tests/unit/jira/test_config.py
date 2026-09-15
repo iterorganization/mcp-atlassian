@@ -80,7 +80,11 @@ def test_from_env_missing_cloud_auth():
 
 
 def test_from_env_missing_server_auth():
-    """Test that from_env raises ValueError when server auth credentials are missing."""
+    """Test that from_env creates config without error when server auth credentials are missing.
+
+    The server now expects credentials to be provided during HTTP calls rather than
+    at config initialization time.
+    """
     with patch.dict(
         os.environ,
         {
@@ -88,11 +92,17 @@ def test_from_env_missing_server_auth():
         },
         clear=True,
     ):
-        with pytest.raises(
-            ValueError,
-            match="Server/Data Center authentication requires JIRA_PERSONAL_TOKEN",
-        ):
-            JiraConfig.from_env()
+        # Should create config without raising an error
+        config = JiraConfig.from_env()
+
+        # Verify it's recognized as a server instance
+        assert config.is_cloud is False
+        assert config.url == "https://jira.example.com"
+
+        # Verify no credentials are set
+        assert config.personal_token is None
+        assert config.username is None
+        assert config.api_token is None
 
 
 def test_is_cloud():

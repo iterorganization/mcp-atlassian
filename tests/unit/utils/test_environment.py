@@ -240,14 +240,14 @@ class TestGetAvailableServices:
             assert all(isinstance(v, bool) for v in result.values())
 
     @pytest.mark.parametrize(
-        "invalid_vars",
+        "invalid_vars,expected_confluence,expected_jira,auth_type",
         [
-            {"CONFLUENCE_URL": "", "JIRA_URL": ""},  # Empty strings
-            {"confluence_url": "https://test.com"},  # Wrong case
+            ({"CONFLUENCE_URL": "", "JIRA_URL": ""}, False, False, "not_configured"),  # Empty strings
+            ({"confluence_url": "https://test.com"}, True, False, "server_no_auth"),  # Valid URL-only server config
         ],
     )
-    def test_invalid_environment_variables(self, invalid_vars, caplog):
-        """Test behavior with invalid environment variables."""
+    def test_invalid_environment_variables(self, invalid_vars, expected_confluence, expected_jira, auth_type, caplog):
+        """Test behavior with edge case environment variable configurations."""
         with MockEnvironment.clean_env():
             for key, value in invalid_vars.items():
                 import os
@@ -256,8 +256,15 @@ class TestGetAvailableServices:
 
             result = get_available_services()
             _assert_service_availability(
-                result, confluence_expected=False, jira_expected=False
+                result, confluence_expected=expected_confluence, jira_expected=expected_jira
             )
-            _assert_authentication_logs(
-                caplog, "not_configured", ["confluence", "jira"]
-            )
+
+            if auth_type == "not_configured":
+                _assert_authentication_logs(
+                    caplog, "not_configured", ["confluence", "jira"]
+                )
+            elif auth_type == "server_no_auth":
+                # Server config without credentials is valid (auth headers expected later)
+                assert_log_contains(
+                    caplog, "INFO", "Server/Data Center authentication (Auth headers expected)"
+                )

@@ -59,6 +59,11 @@ def get_available_services() -> dict[str, bool | None]:
                 logger.info(
                     "Using Confluence Server/Data Center authentication (PAT or Basic Auth)"
                 )
+            else: # Users are expected to provide Authorization header
+                confluence_is_setup = True
+                logger.info(
+                    "Using Confluence Server/Data Center authentication (Auth headers expected)"
+                )
     elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
         confluence_is_setup = True
         logger.info(
@@ -112,6 +117,11 @@ def get_available_services() -> dict[str, bool | None]:
                 logger.info(
                     "Using Jira Server/Data Center authentication (PAT or Basic Auth)"
                 )
+            else: # Users are expected to provide Authorization header
+                jira_is_setup = True
+                logger.info(
+                    "Using Jira Server/Data Center authentication (Auth headers expected)"
+                )
     elif os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in ("true", "1", "yes"):
         jira_is_setup = True
         logger.info(
@@ -128,3 +138,9 @@ def get_available_services() -> dict[str, bool | None]:
         )
 
     return {"confluence": confluence_is_setup, "jira": jira_is_setup}
+
+
+def should_log_mcp_protocol() -> bool:
+    """Check if verbose MCP protocol logging (requests/responses) is enabled."""
+    return os.getenv("MCP_LOG_PROTOCOL", "false").lower() in ("true", "1", "yes")
+

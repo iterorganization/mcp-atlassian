@@ -16,6 +16,15 @@ from mcp_atlassian import main
 class TestMainTransportSelection:
     """Test the main function's transport-specific execution logic."""
 
+    @pytest.fixture(autouse=True)
+    def reset_fastmcp_settings(self):
+        """Reset fastmcp.settings.stateless_http between tests."""
+        import fastmcp
+
+        original_stateless = fastmcp.settings.stateless_http
+        yield
+        fastmcp.settings.stateless_http = original_stateless
+
     @pytest.fixture
     def mock_server(self):
         """Create a mock server instance."""
@@ -61,7 +70,7 @@ class TestMainTransportSelection:
     @pytest.mark.parametrize("stateless", ["False", "True"])
     def test_stateless_set(self, mock_asyncio_run, stateless):
         """Verify that the server is started in stateless mode when the environment variable is set."""
-        from mcp_atlassian.servers import main_mcp
+        import fastmcp
 
         with patch.dict("os.environ", {"STATELESS": stateless}):
             with patch.dict("os.environ", {"TRANSPORT": "streamable-http"}):
@@ -75,7 +84,7 @@ class TestMainTransportSelection:
                     assert mock_asyncio_run.called
 
                     desired = stateless.lower() == "true"
-                    assert main_mcp.settings.stateless_http == desired
+                    assert fastmcp.settings.stateless_http == desired
 
     @pytest.mark.parametrize("transport", ["stdio", "sse"])
     def test_stateless_rejects_non_streamable_http(self, mock_asyncio_run, transport):

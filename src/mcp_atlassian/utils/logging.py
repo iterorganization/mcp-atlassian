@@ -6,6 +6,7 @@ output stream based on their level.
 """
 
 import logging
+import os
 import sys
 from typing import TextIO
 
@@ -116,3 +117,37 @@ def log_config_param(
     """
     display_value = mask_sensitive(value) if sensitive else (value or "Not Provided")
     logger.info(f"{service} {param}: {display_value}")
+
+
+def should_log_protocol() -> bool:
+    """Check if protocol/HTTP traffic logging is enabled via environment variable.
+
+    Returns:
+        True if MCP_LOG_PROTOCOL is set to true/1/yes, False otherwise.
+    """
+    return os.getenv("MCP_LOG_PROTOCOL", "false").lower() in ("true", "1", "yes")
+
+
+def configure_protocol_logging() -> None:
+    """Configure MCP protocol request/response logging based on environment variable.
+
+    Set MCP_LOG_PROTOCOL=true to enable verbose protocol logging.
+    When disabled (default), protocol logs are suppressed by setting logger to WARNING level.
+
+    This configures BOTH the main server logger and the request logging logger.
+    """
+    # Configure main server logger (for incoming MCP requests)
+    protocol_logger = logging.getLogger("mcp-atlassian.server.main")
+
+    # Configure request logging logger (for outbound HTTP requests)
+    request_logger = logging.getLogger("mcp-atlassian.request-logging")
+
+    if should_log_protocol():
+        # Enable verbose protocol logging for both inbound and outbound
+        protocol_logger.setLevel(logging.INFO)
+        request_logger.setLevel(logging.INFO)
+        protocol_logger.info("MCP Protocol logging ENABLED (inbound and outbound traffic)")
+    else:
+        # Disable verbose protocol logging by raising the level
+        protocol_logger.setLevel(logging.WARNING)
+        request_logger.setLevel(logging.WARNING)

@@ -9,6 +9,7 @@ from requests import Session
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
+from ..utils.request_logging import wrap_session_with_logging
 from ..utils.ssl import configure_ssl_verification
 from .config import ConfluenceConfig
 
@@ -46,6 +47,9 @@ class ConfluenceClient:
                 error_msg = "Failed to configure OAuth session"
                 raise MCPAtlassianAuthenticationError(error_msg)
 
+            # Wrap session with request logging
+            wrap_session_with_logging(session)
+
             # The Confluence API URL with OAuth is different
             api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
 
@@ -68,6 +72,10 @@ class ConfluenceClient:
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
             )
+
+            # Wrap session with request logging
+            wrap_session_with_logging(self.confluence._session)
+
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "
@@ -82,6 +90,10 @@ class ConfluenceClient:
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
             )
+
+            # Wrap session with request logging
+            wrap_session_with_logging(self.confluence._session)
+            
             logger.debug(
                 f"Confluence client initialized. "
                 f"Session headers (Authorization masked): "

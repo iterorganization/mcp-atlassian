@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
@@ -21,8 +22,75 @@ confluence_mcp = FastMCP(
 )
 
 
+def _format_search_query(
+    query: str, *, use_site_search: bool = True
+) -> str:
+    """Convert natural language query to CQL, handling logical operators.
+
+    Args:
+        query: The search query string
+        use_site_search: If True, use siteSearch; if False, use text
+
+    Returns:
+        A valid CQL query string
+
+    Examples:
+        "project documentation" -> 'siteSearch ~ "project documentation"'
+        "telework OR remote work" ->
+            'siteSearch ~ "telework" OR siteSearch ~ "remote work"'
+        "devops AND kubernetes" ->
+            'siteSearch ~ "devops" AND siteSearch ~ "kubernetes"'
+        "text ~ \"foo\" OR type=page" ->
+            "text ~ \"foo\" OR type=page" (already CQL)
+    """
+    # Check if query already contains CQL field operators
+    has_field_operators = any(
+        op in query for op in ["=", "~", ">", "<", "currentUser()"]
+    )
+
+    if has_field_operators:
+        # Already valid CQL, return as-is
+        logger.debug(f"Query appears to be valid CQL already: {query}")
+        return query
+
+    # Define the field operator to use
+    field_operator = "siteSearch" if use_site_search else "text"
+
+    # Check if query contains CQL logical operators (uppercase with spaces)
+    # Pattern matches " AND " or " OR " with word boundaries
+    logical_operator_pattern = r"\s+(AND|OR)\s+"
+
+    if re.search(logical_operator_pattern, query):
+        # Split by logical operators while preserving the operators
+        parts = re.split(logical_operator_pattern, query)
+
+        # Reconstruct the query with proper CQL syntax
+        # parts will be like: ["telework", "OR", "remote work"]
+        cql_parts = []
+        for part in parts:
+            part = part.strip()
+            if part in ["AND", "OR"]:
+                # It's a logical operator, keep it as-is
+                cql_parts.append(part)
+            elif part:
+                # It's a search term, wrap it with the field operator
+                cql_parts.append(f'{field_operator} ~ "{part}"')
+
+        result = " ".join(cql_parts)
+        logger.info(
+            f"Converted natural language with operators to CQL: "
+            f"{query} -> {result}"
+        )
+        return result
+
+    # No logical operators, wrap the entire query
+    result = f'{field_operator} ~ "{query}"'
+    logger.debug(f"Converted simple query to CQL: {query} -> {result}")
+    return result
+
+
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "librarian"},
     annotations={"title": "Search Content", "readOnlyHint": True},
 )
 async def search(
@@ -55,7 +123,7 @@ async def search(
     limit: Annotated[
         int,
         Field(
-            description="Maximum number of results (1-50)",
+            description="Maximum number of results to return. MUST be between 1-50 (default: 10).",
             default=10,
             ge=1,
             le=50,
@@ -64,11 +132,7 @@ async def search(
     spaces_filter: Annotated[
         str | None,
         Field(
-            description=(
-                "(Optional) Comma-separated list of space keys to filter results by. "
-                "Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided. "
-                "Use empty string to disable filtering."
-            ),
+            description="Comma-separated space keys to filter by (optional, default: None). Overrides CONFLUENCE_SPACES_FILTER env var. Use empty string to disable filtering.",
             default=None,
         ),
     ] = None,
@@ -85,6 +149,36 @@ async def search(
         JSON string representing a list of simplified Confluence page objects.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    # New code to tackles issues where query contains AND, OR, ... without being a proper CQL.
+    # All queries are formatted no matter what:
+    # - Natural language: "project documentation" -> 'siteSearch ~ "project documentation"'
+    # - Non-CQL logic (agents format like this a LOT, making the former way return 0 results):
+    #     "telework OR remote work" -> siteSearch ~ "telework" OR siteSearch ~ "remote work"'
+    # - Already CQL: 'siteSearch ~ "devops" AND siteSearch ~ "kubernetes"'
+    #     -> 'siteSearch ~ "devops" AND siteSearch ~ "kubernetes"' (unchanged)
+    original_query = query
+    try:
+        # Try with siteSearch first
+        query = _format_search_query(original_query, use_site_search=True)
+        pages = confluence_fetcher.search(
+            query, limit=limit, spaces_filter=spaces_filter
+        )
+    except Exception as e:
+        # If siteSearch fails, fall back to text search
+        logger.warning(
+            f"siteSearch failed with query '{query}' (error: {e}), "
+            f"falling back to text search."
+        )
+        query = _format_search_query(original_query, use_site_search=False)
+        logger.info(f"Retrying with text search: {query}")
+        pages = confluence_fetcher.search(
+            query, limit=limit, spaces_filter=spaces_filter
+        )
+    search_results = [page.to_simplified_dict() for page in pages]
+    return json.dumps(search_results, indent=2, ensure_ascii=False)
+
+    # Previous code - Will not be used - Left untouched for tracking purposes
     # Check if the query is a simple search term or already a CQL query
     if query and not any(
         x in query for x in ["=", "~", ">", "<", " AND ", " OR ", "currentUser()"]
@@ -114,7 +208,7 @@ async def search(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "librarian"},
     annotations={"title": "Get Page", "readOnlyHint": True},
 )
 async def get_page(
@@ -122,51 +216,45 @@ async def get_page(
     page_id: Annotated[
         str | int | None,
         Field(
-            description=(
-                "Confluence page ID (numeric ID, can be found in the page URL). "
-                "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
-                "the page ID is '123456789'. "
-                "Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored."
-            ),
+            description="Confluence page ID (optional, default: None). Numeric ID from page URL. Provide this OR both 'title' and 'space_key'. If provided, title and space_key are ignored.",
             default=None,
         ),
     ] = None,
     title: Annotated[
         str | None,
         Field(
-            description=(
-                "The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known."
-            ),
+            description="Exact page title (optional, default: None). Use with 'space_key' if 'page_id' is not known.",
             default=None,
         ),
     ] = None,
     space_key: Annotated[
         str | None,
         Field(
-            description=(
-                "The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'."
-            ),
+            description="Space key where page resides (optional, default: None). Required if using 'title'. Examples: 'DEV', 'TEAM'",
             default=None,
         ),
     ] = None,
     include_metadata: Annotated[
         bool,
         Field(
-            description="Whether to include page metadata such as creation date, last update, version, and labels.",
+            description="Include page metadata like creation date, last update, version, and labels (default: True).",
             default=True,
         ),
     ] = True,
     convert_to_markdown: Annotated[
         bool,
         Field(
-            description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
-            ),
+            description="Convert page to markdown (default: True). False keeps raw HTML. CAUTION: HTML significantly increases token usage.",
             default=True,
         ),
     ] = True,
+    body_format: Annotated[
+        str,
+        Field(
+            description="Body format to retrieve from Confluence API (default: 'export_view'). Options: 'storage' (raw XHTML), 'view' (rendered), 'export_view' (most compatible, recommended).",
+            default="export_view",
+        ),
+    ] = "export_view",
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -177,6 +265,7 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        body_format: Body format to retrieve ('storage', 'view', or 'export_view').
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
@@ -192,7 +281,9 @@ async def get_page(
         try:
             page_id_str = str(page_id)
             page_object = confluence_fetcher.get_page_content(
-                page_id_str, convert_to_markdown=convert_to_markdown
+                page_id_str,
+                convert_to_markdown=convert_to_markdown,
+                body_format=body_format
             )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
@@ -203,7 +294,10 @@ async def get_page(
             )
     elif title and space_key:
         page_object = confluence_fetcher.get_page_by_title(
-            space_key, title, convert_to_markdown=convert_to_markdown
+            space_key,
+            title,
+            convert_to_markdown=convert_to_markdown,
+            body_format=body_format
         )
         if not page_object:
             return json.dumps(
@@ -234,7 +328,7 @@ async def get_page(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "librarian"},
     annotations={"title": "Get Page Children", "readOnlyHint": True},
 )
 async def get_page_children(
@@ -242,20 +336,20 @@ async def get_page_children(
     parent_id: Annotated[
         str,
         Field(
-            description="The ID of the parent page whose children you want to retrieve"
+            description="Parent page ID whose children to retrieve."
         ),
     ],
     expand: Annotated[
         str,
         Field(
-            description="Fields to expand in the response (e.g., 'version', 'body.storage')",
+            description="Fields to expand in response (default: 'version'). Examples: 'version', 'body.storage', 'body.export_view'",
             default="version",
         ),
     ] = "version",
     limit: Annotated[
         int,
         Field(
-            description="Maximum number of child items to return (1-50)",
+            description="Maximum number of child pages to return. MUST be between 1-50 (default: 25).",
             default=25,
             ge=1,
             le=50,
@@ -264,20 +358,23 @@ async def get_page_children(
     include_content: Annotated[
         bool,
         Field(
-            description="Whether to include the page content in the response",
+            description="Include page content in response (default: False).",
             default=False,
         ),
     ] = False,
     convert_to_markdown: Annotated[
         bool,
         Field(
-            description="Whether to convert page content to markdown (true) or keep it in raw HTML format (false). Only relevant if include_content is true.",
+            description="Convert page content to markdown (default: True). Only relevant if include_content is True.",
             default=True,
         ),
     ] = True,
     start: Annotated[
         int,
-        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+        Field(
+            description="Starting index for pagination (default: 0). MUST be 0 or greater.", 
+            default=0, 
+            ge=0),
     ] = 0,
     include_folders: Annotated[
         bool,
@@ -286,6 +383,13 @@ async def get_page_children(
             default=True,
         ),
     ] = True,
+    body_format: Annotated[
+        str,
+        Field(
+            description="Body format to retrieve from Confluence API (default: 'storage'). Options: 'storage' (raw XHTML), 'view' (rendered), 'export_view' (export-ready). Only used when body content is expanded.",
+            default="storage",
+        ),
+    ] = "storage",
 ) -> str:
     """Get child pages and folders of a specific Confluence page.
 
@@ -298,13 +402,14 @@ async def get_page_children(
         convert_to_markdown: Convert content to markdown if include_content is true.
         start: Starting index for pagination.
         include_folders: Whether to include child folders (default: True).
+        body_format: Body format to retrieve ('storage', 'view', or 'export_view').
 
     Returns:
         JSON string representing a list of child page and folder objects.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     if include_content and "body" not in expand:
-        expand = f"{expand},body.storage" if expand else "body.storage"
+        expand = f"{expand},body.{body_format}" if expand else f"body.{body_format}"
 
     try:
         pages = confluence_fetcher.get_page_children(
@@ -314,6 +419,7 @@ async def get_page_children(
             expand=expand,
             convert_to_markdown=convert_to_markdown,
             include_folders=include_folders,
+            body_format=body_format,
         )
         child_pages = [page.to_simplified_dict() for page in pages]
         result = {
@@ -334,7 +440,7 @@ async def get_page_children(
 
 
 @confluence_mcp.tool(
-    tags={"confluence", "read"},
+    tags={"confluence", "read", "librarian"},
     annotations={"title": "Get Comments", "readOnlyHint": True},
 )
 async def get_comments(
@@ -374,11 +480,7 @@ async def get_labels(
     page_id: Annotated[
         str,
         Field(
-            description=(
-                "Confluence page ID (numeric ID, can be parsed from URL, "
-                "e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' "
-                "-> '123456789')"
-            )
+            description="Confluence page ID (numeric ID from URL). Example: '123456789'"
         ),
     ],
 ) -> str:
@@ -405,7 +507,7 @@ async def get_labels(
 async def add_label(
     ctx: Context,
     page_id: Annotated[str, Field(description="The ID of the page to update")],
-    name: Annotated[str, Field(description="The name of the label")],
+    name: Annotated[str, Field(description="The name of the label to add")],
 ) -> str:
     """Add label to an existing Confluence page.
 
@@ -436,20 +538,20 @@ async def create_page(
     space_key: Annotated[
         str,
         Field(
-            description="The key of the space to create the page in (usually a short uppercase code like 'DEV', 'TEAM', or 'DOC')"
+            description="Space key to create page in. Usually short uppercase code. Examples: 'DEV', 'TEAM', 'DOC'"
         ),
     ],
-    title: Annotated[str, Field(description="The title of the page")],
+    title: Annotated[str, Field(description="Page title.")],
     content: Annotated[
         str,
         Field(
-            description="The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, or storage format"
+            description="Page content. Format depends on content_format parameter. Can be Markdown (default), wiki markup, or storage format."
         ),
     ],
     parent_id: Annotated[
         str | None,
         Field(
-            description="(Optional) parent page ID. If provided, this page will be created as a child of the specified page",
+            description="Parent page ID (optional, default: None). If provided, page will be created as child of specified page.",
             default=None,
         ),
         BeforeValidator(lambda x: str(x) if x is not None else None),
@@ -537,27 +639,27 @@ async def update_page(
         ),
     ],
     is_minor_edit: Annotated[
-        bool, Field(description="Whether this is a minor edit", default=False)
+        bool, Field(description="Mark as minor edit (default: False).", default=False)
     ] = False,
     version_comment: Annotated[
-        str | None, Field(description="Optional comment for this version", default=None)
+        str | None, Field(description="Version comment (optional, default: None).", default=None)
     ] = None,
     parent_id: Annotated[
         str | None,
-        Field(description="Optional the new parent page ID", default=None),
+        Field(description="New parent page ID (optional, default: None).", default=None),
         BeforeValidator(lambda x: str(x) if x is not None else None),
     ] = None,
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description="Content format (default: 'markdown'). Valid values: 'markdown', 'wiki', 'storage'. Wiki uses Confluence wiki markup syntax.",
             default="markdown",
         ),
     ] = "markdown",
     enable_heading_anchors: Annotated[
         bool,
         Field(
-            description="(Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown'",
+            description="Enable automatic heading anchor generation (default: False). Only applies when content_format is 'markdown'.",
             default=False,
         ),
     ] = False,
